@@ -25,6 +25,7 @@ type fmtInfo struct {
 	Model          color.Model
 	ChannelsPerPix int
 	BitsPerChannel int
+	AlphaChannel   int
 }
 
 func main() {
@@ -89,6 +90,12 @@ func main() {
 			fmt.Println("An error occurred while writing \"" + paletteImgPath + "\":", err.Error())
 		}
 	}()
+
+	if len(paletteColours) <= 0 {
+		fmt.Println("No colours could be found.")
+		return
+	}
+
 	if err := png.Encode(newFile, paletteToImg(paletteColours)); err != nil {
 		fmt.Println("An error occurred while writing image data to \"" + paletteImgPath + "\":", err.Error())
 		return
@@ -108,31 +115,41 @@ func isDir(path string) (bool, error) {
 func getImgData(img image.Image) (info fmtInfo, channels []uint8) {
 	switch img.(type) {
 	case *image.RGBA:
-		info = fmtInfo{color.RGBAModel, 4, 8}
+		info = fmtInfo{color.RGBAModel, 4, 8, 3}
 		simg := img.(*image.RGBA)
 		channels = simg.Pix
 	case *image.RGBA64:
-		info = fmtInfo{color.RGBA64Model, 4, 16}
+		info = fmtInfo{color.RGBA64Model, 4, 16, 3}
 		simg := img.(*image.RGBA64)
 		channels = simg.Pix
 	case *image.NRGBA:
-		info = fmtInfo{color.NRGBAModel, 4, 8}
+		info = fmtInfo{color.NRGBAModel, 4, 8, 3}
 		simg := img.(*image.NRGBA)
 		channels = simg.Pix
 	case *image.NRGBA64:
-		info = fmtInfo{color.NRGBA64Model, 4, 16}
+		info = fmtInfo{color.NRGBA64Model, 4, 16, 3}
 		simg := img.(*image.NRGBA64)
 		channels = simg.Pix
 	case *image.Gray:
-		info = fmtInfo{color.GrayModel, 1, 8}
+		info = fmtInfo{color.GrayModel, 1, 8, -1}
 		simg := img.(*image.Gray)
 		channels = simg.Pix
 	case *image.Gray16:
-		info = fmtInfo{color.Gray16Model, 1, 16}
+		info = fmtInfo{color.Gray16Model, 1, 16, -1}
 		simg := img.(*image.Gray16)
 		channels = simg.Pix
+	case *image.Paletted:
+		info = fmtInfo{color.RGBAModel, 4, 8, 3}
+		simg := img.(*image.Paletted)
+		for _, v := range simg.Palette {
+			r, g, b, a := v.RGBA()
+			channels = append(channels, uint8(r))
+			channels = append(channels, uint8(g))
+			channels = append(channels, uint8(b))
+			channels = append(channels, uint8(a))
+		}
 	default:
-		info = fmtInfo{color.AlphaModel, 0, 0}
+		info = fmtInfo{color.AlphaModel, 0, 0, -1}
 	}
 
 	return
@@ -153,11 +170,15 @@ func collectColours(palette *map[uint]struct{}, imgPath string) error {
 	lclPalette := *palette
 
 	info, channels := getImgData(img)
+	//fmt.Println(info)
 	if info.ChannelsPerPix <= 0 {
 		return nil
 	}
 
 	for i := 0; i < len(channels) / info.ChannelsPerPix; i++ {
+		if info.AlphaChannel > -1 && channels[i * info.ChannelsPerPix + info.AlphaChannel] <= 0 {
+			continue
+		}
 		// Limits to maximum targetChannels channels, and repeats the last channel of the pixel to meet the target
 		pix := uint(0)
 		for c := 0; c < targetChannels; c++ {
